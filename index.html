@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Nosso Jogo</title>
+  <style>
+    body { margin: 20px; background: #2d3040; color: white; }
+    /* a linha: os SQMs ficam lado a lado */
+    .linha { display: flex; }
+    /* a mensagem que aparece embaixo da malha */
+    #mensagem { margin-top: 16px; font-size: 32px; font-weight: bold; }
+    /* o SQM: um quadradinho da malha (o tamanho vem do JavaScript) */
+    .sqm {
+      width: var(--sqm);
+      height: var(--sqm);
+      font-size: calc(var(--sqm) * 0.68);
+      text-align: center;
+      line-height: var(--sqm);
+      position: relative;
+      background-repeat: no-repeat;
+      image-rendering: pixelated; /* deixa os quadradinhos do desenho bem nítidos */
+    }
+    /* a aguinha vazando: um pedacinho recortado do agua.png, pés no chão do SQM */
+    .agua {
+      position: absolute;
+      bottom: 6px;
+      background-image: url("agua.png");
+      background-repeat: no-repeat;
+    }
+    /* o Franky de desenho: um pedacinho recortado do sprite.png */
+    .franky {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: var(--sqm);
+      height: var(--sqm);
+      background-image: url("sprite.png");
+      background-repeat: no-repeat;
+      /* o tamanho e o pedaço a mostrar são o JavaScript que escolhe */
+    }
+    /* a tela de vitória: cobre o jogo todo */
+    #vitoria {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 22, 35, 0.85);
+      overflow: hidden;
+      text-align: center;
+      z-index: 10;
+    }
+    #vitoria .texto {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 80%;
+    }
+    #vitoria h1 { font-size: 64px; margin: 0 0 16px; }
+    #vitoria p { font-size: 32px; margin: 8px 0; }
+    /* cada estrela voa do meio da tela até o lugar sorteado (--dx, --dy) */
+    .estrela {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      font-size: 40px;
+      animation: explodir 1.6s ease-out forwards;
+    }
+    @keyframes explodir {
+      from { transform: translate(-50%, -50%) scale(0.2); opacity: 1; }
+      to { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.6) rotate(360deg); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div id="malha"></div>
+  <div id="mensagem"></div>
+  <div id="vitoria">
+    <div class="texto">
+      <h1>🏆 VITÓRIA! 🏆</h1>
+      <p>Franky: "Eu sou o melhor consertador de barcos do mundo! 🔧"</p>
+      <p>Aperta Enter para continuar jogando</p>
+    </div>
+  </div>
+
+  <script>
+    // caixinhas: o tamanho da malha que dá para andar (ele escolheu 5 e 5)
+    const quantasLinhas = 5;
+    const quantasColunas = 5;
+
+    // caixinha: o tamanho de cada SQM na tela (o tileset tem 64, aqui fica 1,5 vez maior)
+    const tamanhoSqm = 96;
+    document.documentElement.style.setProperty("--sqm", tamanhoSqm + "px");
+
+    // o tileset: peças de 64x64, em 6 colunas e 5 linhas
+    const arquivoTileset = "tileset.png";
+    const tilesetLinhas = 5;
+    const tilesetColunas = 6;
+    const tamanhoPeca = 64;
+    // o chão de madeira: linha 2, coluna 5 do tileset
+    const chao = [2, 5];
+
+    // caixinha com o emoji do Franky
+    const franky = "🔧";
+
+    // caixinhas: onde o barco está vazando (começa na linha 3, coluna 3)
+    let linhaDoBarco = 3;
+    let colunaDoBarco = 3;
+
+    // caixinha: os pontos que o Franky já ganhou (começa em zero)
+    let pontos = 0;
+
+    // caixinhas: a conta de matemática que o Franky precisa resolver para consertar
+    let pergunta = null; // enquanto for "null" (vazio), não tem conta nenhuma
+    let aviso = "";      // "Quase!" quando errar
+
+    // caixinha: os números que ele já digitou como resposta
+    let digitado = "";
+
+    // receita: descobre o tamanho da conta pelos pontos
+    // (quanto mais pontos, mais difícil!)
+    //   menos de 200  -> 2 números, resposta até 9,   conserto vale 30
+    //   200 ou mais   -> 3 números, resposta até 9,   conserto vale 25
+    //   500 ou mais   -> 3 números, resposta até 50,  conserto vale 20
+    //   1000 ou mais  -> 3 números, resposta até 100, conserto vale 15
+    function nivelDaConta() {
+      if (pontos >= 1000) return { quantosNumeros: 3, maximo: 100, valor: 15 };
+      if (pontos >= 500) return { quantosNumeros: 3, maximo: 50, valor: 20 };
+      if (pontos >= 200) return { quantosNumeros: 3, maximo: 9, valor: 25 };
+      return { quantosNumeros: 2, maximo: 9, valor: 30 };
+    }
+
+    // caixinha: vira "true" quando ele chega nos 1000 pontos (a vitória só acontece 1 vez)
+    let venceu = false;
+
+    // receita: mostra a tela de vitória com uma explosão de estrelas
+    function mostrarVitoria() {
+      const tela = document.getElementById("vitoria");
+      tela.style.display = "block";
+      const desenhos = ["⭐", "🌟", "✨"];
+      // repete 80 vezes: cada vez cria uma estrela que voa para um lugar sorteado
+      for (let i = 0; i < 80; i++) {
+        const estrela = document.createElement("div");
+        estrela.className = "estrela";
+        estrela.textContent = desenhos[i % desenhos.length];
+        const angulo = Math.random() * 2 * Math.PI;
+        const distancia = 150 + Math.random() * 600;
+        estrela.style.setProperty("--dx", Math.cos(angulo) * distancia + "px");
+        estrela.style.setProperty("--dy", Math.sin(angulo) * distancia + "px");
+        estrela.style.animationDelay = Math.random() * 0.4 + "s";
+        tela.appendChild(estrela);
+      }
+    }
+
+    // receita: esconde a tela de vitória e apaga as estrelas
+    function fecharVitoria() {
+      const tela = document.getElementById("vitoria");
+      tela.style.display = "none";
+      tela.querySelectorAll(".estrela").forEach(function (e) { e.remove(); });
+    }
+
+    // receita: inventa uma conta de MAIS e de MENOS misturadas.
+    // O resultado nunca fica abaixo de 1 nem passa do máximo
+    function sortearPergunta() {
+      const { quantosNumeros, maximo } = nivelDaConta();
+      let total = 1 + Math.floor(Math.random() * maximo); // 1º número
+      let texto = String(total);
+      for (let i = 1; i < quantosNumeros; i++) {
+        const podeSomar = total < maximo;
+        const podeSubtrair = total > 1;
+        if (podeSomar && (!podeSubtrair || Math.random() < 0.5)) {
+          const b = 1 + Math.floor(Math.random() * (maximo - total));
+          total = total + b;
+          texto = texto + " + " + b;
+        } else {
+          const b = 1 + Math.floor(Math.random() * (total - 1));
+          total = total - b;
+          texto = texto + " − " + b;
+        }
+      }
+      pergunta = { texto: texto, resposta: total };
+      digitado = "";
+      aviso = "";
+    }
+
+    // receita: depois do conserto, o barco some e a água vaza em OUTRO lugar
+    function sortearNovoVazamento() {
+      let novaLinha, novaColuna;
+      // sorteia um SQM da malha, mas não o que o Franky está pisando
+      do {
+        novaLinha = 1 + Math.floor(Math.random() * quantasLinhas);
+        novaColuna = 1 + Math.floor(Math.random() * quantasColunas);
+      } while (novaLinha === linhaDoFranky && novaColuna === colunaDoFranky);
+      linhaDoBarco = novaLinha;
+      colunaDoBarco = novaColuna;
+    }
+
+    // caixinhas: onde o Franky está agora
+    let linhaDoFranky = 1;
+    let colunaDoFranky = 1;
+
+    // a folha de desenhos: cada linha da folha é uma animação
+    // "cima" = onde a linha da folha começa
+    // "desenhos" = onde cada desenho começa e termina, da esquerda para a direita
+    const folha = {
+      parado: {
+        cima: 6,
+        desenhos: [[28, 118], [140, 229], [253, 343], [365, 455], [479, 571]]
+      },
+      andando: {
+        cima: 122,
+        desenhos: [[8, 86], [90, 156], [163, 225], [233, 301], [304, 366], [376, 434], [447, 511], [520, 587]]
+      },
+      consertando: {
+        cima: 248,
+        desenhos: [[11, 96], [106, 194], [205, 296], [306, 394], [402, 492], [505, 594]]
+      }
+    };
+    const aumento = tamanhoSqm / 100; // quanto a folha é aumentada na tela
+
+    // a aguinha vazando (agua.png): 5 desenhos, do começo ao fim de cada um
+    const agua = {
+      cima: 310,
+      baixo: 767,
+      desenhos: [[37, 255], [348, 565], [655, 871], [954, 1175], [1267, 1490]]
+    };
+    const escalaAgua = 0.26; // quanto a água é encolhida para caber no SQM
+    let quadroAgua = 0;      // qual desenho da água aparece agora
+    let tique = 0;           // conta as batidas do relógio
+
+    // caixinhas: o que o Franky está fazendo e qual desenho está mostrando
+    let estado = "parado";
+    let quadro = 0; // 0 = 1º desenho, 1 = 2º desenho...
+    let paraDeAndar = null; // cronômetro: depois de um tempo ele volta a ficar parado
+
+    // caixinha com a mensagem (a frase é dele pra mudar!)
+    const frase = "Barco consertado! 🎉";
+
+    const malha = document.getElementById("malha");
+    const mensagem = document.getElementById("mensagem");
+
+    // receita: desenha a malha de novo, com o Franky no lugar certo
+    function desenhar() {
+      malha.innerHTML = "";
+
+      // SE tem uma conta para resolver, ENTÃO mostra a conta.
+      // SENÃO, SE já ganhou pontos, mostra a frase e o total. SENÃO, deixa vazio
+      if (pergunta) {
+        mensagem.textContent = "Quanto é " + pergunta.texto + " = " + (digitado || "?") + " 🤔 " + aviso;
+      } else {
+        mensagem.textContent = pontos > 0 ? frase + " Total: " + pontos + " pontos" : "";
+      }
+
+      // repete uma vez para cada linha. Começa na linha 0 e termina na linha 6:
+      // as linhas 0 e 6 são "de mentirinha", só para desenhar a borda
+      for (let linha = 0; linha <= quantasLinhas + 1; linha++) {
+        const divLinha = document.createElement("div");
+        divLinha.className = "linha";
+
+        // repete uma vez para cada coluna (também com as colunas 0 e 6 da borda)
+        for (let coluna = 0; coluna <= quantasColunas + 1; coluna++) {
+          const sqm = document.createElement("div");
+          sqm.className = "sqm";
+
+          // SE está fora das linhas 1 a 5 ou das colunas 1 a 5, ENTÃO é borda
+          const cima = linha < 1;
+          const baixo = linha > quantasLinhas;
+          const esquerda = coluna < 1;
+          const direita = coluna > quantasColunas;
+
+          // qual peça do tileset desenhar aqui: [linha, coluna] no tileset
+          let peca = chao;
+          if (cima || baixo || esquerda || direita) {
+            // a moldura é um quadrado 3x3 no canto do tileset:
+            // cima = linha 1, meio = linha 2, baixo = linha 3 (e igual nas colunas)
+            peca = [
+              cima ? 1 : baixo ? 3 : 2,
+              esquerda ? 1 : direita ? 3 : 2
+            ];
+          }
+
+          // recorta a peça certa do tileset
+          sqm.style.backgroundImage = 'url("' + encodeURI(arquivoTileset) + '")';
+          sqm.style.backgroundSize =
+            (tilesetColunas * tamanhoSqm) + "px " + (tilesetLinhas * tamanhoSqm) + "px";
+          sqm.style.backgroundPosition =
+            (-(peca[1] - 1) * tamanhoSqm) + "px " + (-(peca[0] - 1) * tamanhoSqm) + "px";
+
+          const temBarco = (linha === linhaDoBarco && coluna === colunaDoBarco);
+          const temFranky = (linha === linhaDoFranky && coluna === colunaDoFranky);
+
+          // SE tem barco vazando, ENTÃO coloca a aguinha aqui
+          if (temBarco) {
+            const desenhoAgua = document.createElement("div");
+            desenhoAgua.className = "agua";
+
+            // recorta o desenho certo da água, igual fizemos com o Franky
+            const [aComeco, aFim] = agua.desenhos[quadroAgua];
+            const aLargura = (aFim - aComeco + 1) * escalaAgua;
+            desenhoAgua.style.width = aLargura + "px";
+            desenhoAgua.style.height = (agua.baixo - agua.cima + 1) * escalaAgua + "px";
+            desenhoAgua.style.left = (tamanhoSqm - aLargura) / 2 + "px"; // no meio do SQM
+            desenhoAgua.style.backgroundSize =
+              (1536 * escalaAgua) + "px " + (1024 * escalaAgua) + "px";
+            desenhoAgua.style.backgroundPosition =
+              (-aComeco * escalaAgua) + "px " + (-agua.cima * escalaAgua) + "px";
+
+            sqm.appendChild(desenhoAgua);
+          }
+
+          // SE tem Franky, ENTÃO coloca o desenho dele por cima
+          if (temFranky) {
+            const desenhoFranky = document.createElement("div");
+            desenhoFranky.className = "franky";
+
+            // recorta SÓ o desenho certo da folha (a "janelinha"),
+            // do começo ao fim dele, sem pegar o vizinho
+            const animacao = folha[estado];
+            const [comeco, fim] = animacao.desenhos[quadro];
+            const largura = (fim - comeco + 1) * aumento;
+            desenhoFranky.style.width = largura + "px";
+            desenhoFranky.style.left = (tamanhoSqm - largura) / 2 + "px"; // no meio do SQM
+            desenhoFranky.style.backgroundSize = (600 * aumento) + "px " + (400 * aumento) + "px";
+            desenhoFranky.style.backgroundPosition =
+              (-comeco * aumento) + "px " + (-animacao.cima * aumento) + "px";
+
+            sqm.appendChild(desenhoFranky);
+          }
+
+          divLinha.appendChild(sqm);
+        }
+
+        malha.appendChild(divLinha);
+      }
+    }
+
+    // quando apertar uma tecla, o Franky anda
+    document.addEventListener("keydown", function (tecla) {
+      // enquanto a tela de vitória está aberta, só o Enter fecha
+      if (document.getElementById("vitoria").style.display === "block") {
+        if (tecla.key === "Enter") fecharVitoria();
+        return;
+      }
+
+      // enquanto está consertando, o Franky fica concentrado e não anda:
+      // ele só espera a resposta da conta (digita os números; Backspace apaga)
+      if (estado === "consertando") {
+        if (tecla.key === "Backspace") {
+          digitado = digitado.slice(0, -1);
+          desenhar();
+        } else if (/^[0-9]$/.test(tecla.key)) {
+          digitado = digitado + tecla.key;
+          aviso = "";
+          // quando digitou todos os números da resposta, confere
+          if (digitado.length >= String(pergunta.resposta).length) {
+            // SE a resposta está certa, ENTÃO ganha pontos e o barco some
+            if (Number(digitado) === pergunta.resposta) {
+              pontos = pontos + nivelDaConta().valor; // soma 30, 25, 20 ou 15 pontos
+              pergunta = null;
+              // SE chegou nos 1000 pontos pela primeira vez, ENTÃO é vitória!
+              if (pontos >= 1000 && !venceu) {
+                venceu = true;
+                mostrarVitoria();
+              }
+              sortearNovoVazamento();
+              estado = "parado";
+              quadro = 0;
+            } else {
+              // SENÃO, ele tenta de novo (sem perder pontos!)
+              digitado = "";
+              aviso = "Quase! Tenta de novo 😊";
+            }
+          }
+          desenhar();
+        }
+        return;
+      }
+
+      if (tecla.key === "ArrowRight" && colunaDoFranky < quantasColunas) {
+        colunaDoFranky = colunaDoFranky + 1;
+      }
+      if (tecla.key === "ArrowLeft" && colunaDoFranky > 1) {
+        colunaDoFranky = colunaDoFranky - 1;
+      }
+      if (tecla.key === "ArrowDown" && linhaDoFranky < quantasLinhas) {
+        linhaDoFranky = linhaDoFranky + 1;
+      }
+      if (tecla.key === "ArrowUp" && linhaDoFranky > 1) {
+        linhaDoFranky = linhaDoFranky - 1;
+      }
+      // SE o Franky chegou no barco vazando, ENTÃO ele começa a consertar
+      // e aparece uma conta (ele só termina quando acertar a resposta)
+      if (linhaDoFranky === linhaDoBarco && colunaDoFranky === colunaDoBarco) {
+        clearTimeout(paraDeAndar);
+        estado = "consertando";
+        quadro = 0;
+        sortearPergunta();
+        desenhar();
+        return;
+      }
+
+      // SE apertou uma seta, ENTÃO o Franky começa a andar
+      if (tecla.key.startsWith("Arrow")) {
+        if (estado !== "andando") {
+          estado = "andando";
+          quadro = 0;
+        }
+        // volta a ficar parado se ficar um tempinho sem apertar
+        clearTimeout(paraDeAndar);
+        paraDeAndar = setTimeout(function () {
+          estado = "parado";
+          quadro = 0;
+          desenhar();
+        }, 400);
+      }
+
+      desenhar();
+    });
+
+    // o relógio: a cada 120 milésimos de segundo, passa para o próximo desenho
+    setInterval(function () {
+      quadro = quadro + 1;
+
+      // depois do último desenho, volta para o primeiro: o Franky fica
+      // consertando sem parar, até a resposta certa
+      quadro = quadro % folha[estado].desenhos.length;
+
+      // a água muda de desenho a cada 2 batidas (um pouco mais devagar)
+      tique = tique + 1;
+      quadroAgua = Math.floor(tique / 2) % agua.desenhos.length;
+      desenhar();
+    }, 120);
+
+    desenhar();
+  </script>
+</body>
+</html>
